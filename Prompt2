@@ -1,0 +1,11 @@
+Tasks:
+1. If everything looks fine → respond: "✅ Everything looks fine".
+2. If risks exist:
+   - Identify the risky code changes.
+   - Map them to one or more of the failure patterns above.
+   - Highlight why that change could lead to the mapped failure.
+
+Return structured JSON with fields:
+- status: "fine" or "issues"
+- issues: [{{"code_snippet": "...", "pattern": "...", "reason": "..."}}]
+"""
