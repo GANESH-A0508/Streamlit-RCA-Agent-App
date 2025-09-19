@@ -1,11 +1,143 @@
-Tasks:
-1. If everything looks fine → respond: "✅ Everything looks fine".
-2. If risks exist:
-   - Identify the risky code changes.
-   - Map them to one or more of the failure patterns above.
-   - Highlight why that change could lead to the mapped failure.
 
-Return structured JSON with fields:
-- status: "fine" or "issues"
-- issues: [{{"code_snippet": "...", "pattern": "...", "reason": "..."}}]
+### Your tasks:
+1. If everything looks safe → respond only with JSON:
+{{
+  "status": "fine",
+  "issues": []
+}}
+
+2. If clear risks exist → respond only with JSON in this format:
+{{
+  "status": "issues",
+  "issues": [
+    {{ "code_snippet": "...", "pattern": "...", "reason": "..." }}
+  ]
+}}
+
+3. If there are cases where the issue **may or may not occur depending on external conditions or assumptions**:
+   - Do not assume automatically.
+   - Instead, respond with JSON in this format:
+{{
+  "status": "clarification_needed",
+  "questions": [
+    "Your clarifying question 1",
+    "Your clarifying question 2"
+  ]
+}}
 """
+
+    # If clarifications exist, append them
+    if clarifications:
+        clar_text = "\n".join([f"- {q}: {a}" for q, a in clarifications.items()])
+        base_prompt += f"""
+
+User provided clarifications:
+{clar_text}
+
+Now finalize your analysis again using the same JSON schema.
+"""
+    return base_prompt
+
+
+# ------------------------------
+# Streamlit UI
+# ------------------------------
+st.set_page_config(page_title="RCA Code Review Agent", page_icon="🕵️", layout="wide")
+st.title("🕵️ RCA Code Review Agent with Clarifications")
+
+# Step 1: Upload patterns JSON
+patterns_file = st.file_uploader("Upload RCA Patterns JSON", type=["json"])
+patterns = None
+if patterns_file:
+    patterns = json.load(patterns_file)
+    st.success("✅ Patterns loaded successfully")
+
+# Step 2: Paste or upload code diff
+code_diff_input = st.text_area("Paste code diff here", height=200, placeholder="Enter your git diff or code changes...")
+uploaded_diff = st.file_uploader("Or upload a code diff file", type=["txt", "diff"])
+if uploaded_diff and not code_diff_input:
+    code_diff_input = uploaded_diff.read().decode("utf-8")
+
+# Session state for clarifications
+if "clarification_questions" not in st.session_state:
+    st.session_state.clarification_questions = []
+if "clarifications" not in st.session_state:
+    st.session_state.clarifications = {}
+
+# Step 3: Run Analysis
+if st.button("🔍 Analyze Code Diff") and patterns and code_diff_input:
+    with st.spinner("Analyzing with RCA agent..."):
+        client = openai.OpenAI()
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",  # Use your LLM
+            messages=[{"role": "user", "content": build_prompt(patterns, code_diff_input)}],
+            temperature=0
+        )
+
+        result_text = response.choices[0].message.content.strip()
+
+        try:
+            result = json.loads(result_text)
+        except Exception:
+            st.error("❌ LLM did not return valid JSON")
+            st.code(result_text, language="json")
+            st.stop()
+
+        # Handle LLM response
+        if result["status"] == "fine":
+            st.success("✅ Everything looks fine. No issues detected.")
+
+        elif result["status"] == "issues":
+            st.error("🚨 Issues detected:")
+            for issue in result["issues"]:
+                with st.expander(f"Pattern: {issue['pattern']}"):
+                    st.markdown(f"**Reason:** {issue['reason']}")
+                    st.code(issue["code_snippet"], language="diff")
+
+        elif result["status"] == "clarification_needed":
+            st.warning("❓ Clarification needed before final analysis")
+            st.session_state.clarification_questions = result["questions"]
+
+
+# Step 4: Show clarification questions if needed
+if st.session_state.clarification_questions:
+    st.subheader("🔎 Clarifications Required")
+    answers = {}
+    for q in st.session_state.clarification_questions:
+        answers[q] = st.text_input(q)
+
+    if st.button("Submit Clarifications"):
+        # Save clarifications
+        st.session_state.clarifications.update(answers)
+
+        # Re-run analysis with clarifications
+        with st.spinner("Re-analyzing with clarifications..."):
+            client = openai.OpenAI()
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "user", "content": build_prompt(patterns, code_diff_input, st.session_state.clarifications)}],
+                temperature=0
+            )
+
+            result_text = response.choices[0].message.content.strip()
+            try:
+                result = json.loads(result_text)
+            except Exception:
+                st.error("❌ LLM did not return valid JSON after clarifications")
+                st.code(result_text, language="json")
+                st.stop()
+
+            # Clear clarification state
+            st.session_state.clarification_questions = []
+            st.session_state.clarifications = {}
+
+            # Show final results
+            if result["status"] == "fine":
+                st.success("✅ Everything looks fine. No issues detected.")
+
+            elif result["status"] == "issues":
+                st.error("🚨 Issues detected after clarification:")
+                for issue in result["issues"]:
+                    with st.expander(f"Pattern: {issue['pattern']}"):
+                        st.markdown(f"**Reason:** {issue['reason']}")
+                        st.code(issue["code_snippet"], language="diff")
