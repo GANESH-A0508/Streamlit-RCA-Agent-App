@@ -1,0 +1,139 @@
+h2. Purpose
+To build an AI Agent that ingests Spring Boot microservices (deployed on PCF dev space), analyzes code + deployment metadata, and provides insights into:
+
+Overall functional behaviour (Login → Payments → Logout)
+
+Subsystems and interactions
+
+Databases and data flows
+
+End-to-end journeys
+
+h2. High-level Architecture
+
+|| Component || Description ||
+| Collector / Ingest | Fetch PCF metadata (apps, routes, bindings) and codebase. |
+| Parser & Extractor | Java Maven project using JavaParser to extract controllers, services, entities, repos. |
+| Indexer | Python + FAISS + Sentence Transformers to build vector DB from extracted chunks. |
+| AI Agent | LangChain agent powered by OpenAI to answer queries over indexed data. |
+| Frontend | Streamlit app for interactive Q&A and visual graph display. |
+| Security & Ops | Role-based access, PCF deployment with manifest, CI/CD via Jenkins. |
+
+h2. Repo Structure
+
+{code:java|title=Project Structure}
+ai-agent-paymentapp/
+├─ code-extractor/ (Java Maven Project)
+├─ indexer/ (Python Indexer)
+├─ agent/ (LangChain Agent)
+├─ ui/ (Streamlit UI)
+├─ requirements.txt
+└─ output/ (chunks.json + index)
+{code}
+
+h2. Java Maven Project — Code Extractor
+
+Generates chunks.json describing each class/service/controller/entity in the codebase.
+
+{code:xml|title=pom.xml}
+<project xmlns="http://maven.apache.org/POM/4.0.0
+" ...>
+<dependencies>
+<dependency>
+<groupId>com.github.javaparser</groupId>
+<artifactId>javaparser-core</artifactId>
+<version>3.25.4</version>
+</dependency>
+<dependency>
+<groupId>com.fasterxml.jackson.core</groupId>
+<artifactId>jackson-databind</artifactId>
+<version>2.15.2</version>
+</dependency>
+</dependencies>
+</project>
+{code}
+
+{panel:title=Usage|borderStyle=solid|borderColor=#ccc|bgColor=#F9F9F9}
+
+Build: mvn clean package
+
+Run: java -cp target/code-extractor-1.0-SNAPSHOT.jar com.example.extractor.App ../springboot-services
+
+Output: output/chunks.json
+{panel}
+
+h2. Python Indexer
+
+Builds FAISS vector index from chunks.json.
+
+{code:python|title=indexer/build_index.py}
+import json, faiss
+from sentence_transformers import SentenceTransformer
+
+with open('chunks.json') as f:
+chunks = json.load(f)
+
+texts = [c['description'] for c in chunks]
+model = SentenceTransformer('all-MiniLM-L6-v2')
+embs = model.encode(texts)
+
+index = faiss.IndexFlatL2(embs.shape[1])
+index.add(embs)
+faiss.write_index(index, 'chunks.index')
+{code}
+
+h2. AI Agent (LangChain)
+
+Uses FAISS + LLM to answer queries.
+
+{code:python|title=agent/agent_app.py}
+from langchain.llms import OpenAI
+from langchain.chains import ConversationalRetrievalChain
+from langchain.vectorstores import FAISS
+...
+
+llm = OpenAI(temperature=0)
+qa = ConversationalRetrievalChain.from_llm(llm, vectorstore.as_retriever())
+
+def answer(query, chat_history=[]):
+return qa({"question": query, "chat_history": chat_history})['answer']
+{code}
+
+h2. Streamlit Frontend
+
+{code:python|title=ui/app.py}
+import streamlit as st
+from agent.agent_app import answer
+
+st.title("AI Agent — Payment App Explorer")
+query = st.text_input("Ask about the system:")
+if st.button("Ask"):
+st.write(answer(query))
+{code}
+
+Run:
+{code:bash}
+streamlit run ui/app.py
+{code}
+
+h2. Example Queries
+
+“Show me the full flow for wallet-to-bank transfer”
+
+“Which DBs are used during login?”
+
+“What services are called when a recharge is performed?”
+
+h2. Next Steps
+
+ Add PCF manifest.yml and Dockerfile for deployment
+
+ Connect CI/CD with Jenkins pipelines
+
+ Secure endpoints with OAuth2 / SSO
+
+ Enhance graph visualization with PyVis
+
+👉 This Confluence page documents the entire workflow from extraction → indexing → agent → UI, and can be shared with your dev + ops team.
+
+Would you like me to extend this Confluence doc with PCF manifest.yml + Dockerfile sections so your team has deployment-ready details in the same page?
