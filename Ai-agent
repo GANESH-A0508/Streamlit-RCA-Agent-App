@@ -7,10 +7,9 @@ The agent analyzes all microservices, their APIs, subsystems, and databases to p
 </p>
 
 <h2>1. Architecture</h2>
-<p>High-level components:</p>
 <ul>
-  <li><strong>Collector:</strong> Gathers PCF app metadata and code.</li>
-  <li><strong>Parser & Extractor:</strong> Java Maven project using JavaParser.</li>
+  <li><strong>Collector:</strong> Gathers PCF app metadata (via Cloud Foundry API) and source code.</li>
+  <li><strong>Parser & Extractor:</strong> Java Maven project using JavaParser + Jackson.</li>
   <li><strong>Indexer:</strong> Python script with embeddings + FAISS vector DB.</li>
   <li><strong>Agent:</strong> LangChain-based retrieval QA pipeline.</li>
   <li><strong>Frontend:</strong> Streamlit app for interactive Q&amp;A.</li>
@@ -20,16 +19,19 @@ The agent analyzes all microservices, their APIs, subsystems, and databases to p
 <ac:structured-macro ac:name="code">
   <ac:plain-text-body><![CDATA[
 ai-agent-paymentapp/
-├── code-extractor/   (Java Maven Project)
-├── indexer/          (Python indexer)
-├── agent/            (Agent logic)
-├── ui/               (Streamlit UI)
+├── collector/          (Java Maven Collector project)
+├── code-extractor/     (Java Maven Extractor project)
+├── indexer/            (Python indexer)
+├── agent/              (Python agent)
+├── ui/                 (Streamlit UI)
 ├── requirements.txt
-└── output/           (chunks.json, index files)
+└── output/             (chunks.json, index files)
   ]]></ac:plain-text-body>
 </ac:structured-macro>
 
-<h2>3. Java Maven Project — Code Extractor</h2>
+<h2>3. Collector (Java Maven)</h2>
+<p>Fetches PCF app metadata using <code>cf-java-client</code>.</p>
+
 <ac:structured-macro ac:name="code">
   <ac:parameter ac:name="language">xml</ac:parameter>
   <ac:parameter ac:name="title">pom.xml</ac:parameter>
@@ -37,13 +39,13 @@ ai-agent-paymentapp/
 <project xmlns="http://maven.apache.org/POM/4.0.0">
   <modelVersion>4.0.0</modelVersion>
   <groupId>com.example</groupId>
-  <artifactId>code-extractor</artifactId>
+  <artifactId>collector</artifactId>
   <version>1.0-SNAPSHOT</version>
   <dependencies>
     <dependency>
-      <groupId>com.github.javaparser</groupId>
-      <artifactId>javaparser-core</artifactId>
-      <version>3.25.4</version>
+      <groupId>org.cloudfoundry</groupId>
+      <artifactId>cloudfoundry-client-reactor</artifactId>
+      <version>4.20.0</version>
     </dependency>
     <dependency>
       <groupId>com.fasterxml.jackson.core</groupId>
@@ -55,67 +57,59 @@ ai-agent-paymentapp/
   ]]></ac:plain-text-body>
 </ac:structured-macro>
 
-<p><strong>Usage:</strong></p>
 <ac:structured-macro ac:name="code">
-  <ac:parameter ac:name="language">bash</ac:parameter>
+  <ac:parameter ac:name="language">java</ac:parameter>
+  <ac:parameter ac:name="title">CollectorApp.java</ac:parameter>
   <ac:plain-text-body><![CDATA[
-mvn clean package
-java -cp target/code-extractor-1.0-SNAPSHOT.jar com.example.extractor.App ../springboot-services
-  ]]></ac:plain-text-body>
-</ac:structured-macro>
+package com.example.collector;
 
-<p>Output: <code>output/chunks.json</code></p>
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.cloudfoundry.client.v3.ApplicationsV3;
+import org.cloudfoundry.reactor.ConnectionContext;
+import org.cloudfoundry.reactor.DefaultConnectionContext;
+import org.cloudfoundry.reactor.client.ReactorCloudFoundryClient;
+import org.cloudfoundry.reactor.tokenprovider.PasswordGrantTokenProvider;
+import reactor.core.publisher.Flux;
 
-<h2>4. Python Indexer</h2>
-<ac:structured-macro ac:name="code">
-  <ac:parameter ac:name="language">python</ac:parameter>
-  <ac:parameter ac:name="title">indexer/build_index.py</ac:parameter>
-  <ac:plain-text-body><![CDATA[
-import json, faiss
-from sentence_transformers import SentenceTransformer
+import java.io.File;
+import java.util.HashMap;
+import java.util.Map;
 
-with open('chunks.json') as f:
-    chunks = json.load(f)
+public class CollectorApp {
+    public static void main(String[] args) throws Exception {
+        ConnectionContext context = DefaultConnectionContext.builder()
+            .apiHost(System.getenv("CF_API"))
+            .build();
 
-texts = [c['description'] for c in chunks]
-model = SentenceTransformer('all-MiniLM-L6-v2')
-embs = model.encode(texts)
+        ReactorCloudFoundryClient client = ReactorCloudFoundryClient.builder()
+            .connectionContext(context)
+            .tokenProvider(PasswordGrantTokenProvider.builder()
+                .username(System.getenv("CF_USER"))
+                .password(System.getenv("CF_PASSWORD"))
+                .build())
+            .build();
 
-index = faiss.IndexFlatL2(embs.shape[1])
-index.add(embs)
-faiss.write_index(index, 'chunks.index')
-  ]]></ac:plain-text-body>
-</ac:structured-macro>
+        Flux<Map<String, Object>> apps = client.applicationsV3()
+            .list(ApplicationsV3.ListRequest.builder().build())
+            .flatMapIterable(r -> r.getResources())
+            .map(res -> {
+                Map<String, Object> map = new HashMap<>();
+                map.put("name", res.getName());
+                map.put("guid", res.getId());
+                map.put("state", res.getState());
+                map.put("createdAt", res.getCreatedAt());
+                return map;
+            });
 
-<h2>5. AI Agent (LangChain)</h2>
-<ac:structured-macro ac:name="code">
-  <ac:parameter ac:name="language">python</ac:parameter>
-  <ac:parameter ac:name="title">agent/agent_app.py</ac:parameter>
-  <ac:plain-text-body><![CDATA[
-from langchain.llms import OpenAI
-from langchain.chains import ConversationalRetrievalChain
-from langchain.vectorstores import FAISS
+        ObjectMapper mapper = new ObjectMapper();
+        mapper.writerWithDefaultPrettyPrinter().writeValue(
+            new File("output/pcf_apps.json"),
+            apps.collectList().block()
+        );
 
-llm = OpenAI(temperature=0)
-qa = ConversationalRetrievalChain.from_llm(llm, vectorstore.as_retriever())
-
-def answer(query, chat_history=[]):
-    return qa({"question": query, "chat_history": chat_history})['answer']
-  ]]></ac:plain-text-body>
-</ac:structured-macro>
-
-<h2>6. Streamlit Frontend</h2>
-<ac:structured-macro ac:name="code">
-  <ac:parameter ac:name="language">python</ac:parameter>
-  <ac:parameter ac:name="title">ui/app.py</ac:parameter>
-  <ac:plain-text-body><![CDATA[
-import streamlit as st
-from agent.agent_app import answer
-
-st.title("AI Agent — Payment App Explorer")
-query = st.text_input("Ask about the system:")
-if st.button("Ask"):
-    st.write(answer(query))
+        System.out.println("[Collector] PCF app metadata written to output/pcf_apps.json");
+    }
+}
   ]]></ac:plain-text-body>
 </ac:structured-macro>
 
@@ -123,11 +117,142 @@ if st.button("Ask"):
 <ac:structured-macro ac:name="code">
   <ac:parameter ac:name="language">bash</ac:parameter>
   <ac:plain-text-body><![CDATA[
-streamlit run ui/app.py
+mvn clean package
+CF_API=api.sys.pcf.example.com \
+CF_USER=dev@example.com \
+CF_PASSWORD=secret \
+java -cp target/collector-1.0-SNAPSHOT.jar com.example.collector.CollectorApp
   ]]></ac:plain-text-body>
 </ac:structured-macro>
 
-<h2>7. Deployment to PCF</h2>
+<p>Output: <code>output/pcf_apps.json</code></p>
+
+<h2>4. Code Extractor (Java Maven)</h2>
+<p>Uses JavaParser to walk through microservice codebases and extract classes, methods, and annotations.</p>
+
+<ac:structured-macro ac:name="code">
+  <ac:parameter ac:name="language">java</ac:parameter>
+  <ac:parameter ac:name="title">ExtractorApp.java</ac:parameter>
+  <ac:plain-text-body><![CDATA[
+package com.example.extractor;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.github.javaparser.StaticJavaParser;
+import com.github.javaparser.ast.CompilationUnit;
+
+import java.io.File;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.*;
+
+public class ExtractorApp {
+    public static void main(String[] args) throws Exception {
+        String projectRoot = args.length > 0 ? args[0] : "../springboot-services";
+        List<Map<String, String>> chunks = new ArrayList<>();
+
+        Files.walk(Path.of(projectRoot))
+            .filter(p -> p.toString().endsWith(".java"))
+            .forEach(p -> {
+                try {
+                    CompilationUnit cu = StaticJavaParser.parse(p);
+                    Map<String, String> map = new HashMap<>();
+                    map.put("id", UUID.randomUUID().toString());
+                    map.put("file", p.toString());
+                    map.put("description", cu.toString().substring(0, Math.min(500, cu.toString().length())));
+                    chunks.add(map);
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+            });
+
+        ObjectMapper mapper = new ObjectMapper();
+        mapper.writerWithDefaultPrettyPrinter().writeValue(
+            new File("output/chunks.json"), chunks
+        );
+
+        System.out.println("[Extractor] Parsed " + chunks.size() + " files → output/chunks.json");
+    }
+}
+  ]]></ac:plain-text-body>
+</ac:structured-macro>
+
+<h2>5. Python Indexer</h2>
+<ac:structured-macro ac:name="code">
+  <ac:parameter ac:name="language">python</ac:parameter>
+  <ac:parameter ac:name="title">indexer/build_index.py</ac:parameter>
+  <ac:plain-text-body><![CDATA[
+import json, faiss
+from sentence_transformers import SentenceTransformer
+
+with open('output/chunks.json') as f:
+    chunks = json.load(f)
+
+texts = [c['description'] for c in chunks]
+model = SentenceTransformer('all-MiniLM-L6-v2')
+embs = model.encode(texts, show_progress_bar=True)
+
+index = faiss.IndexFlatL2(embs.shape[1])
+index.add(embs)
+
+faiss.write_index(index, 'output/chunks.index')
+with open('output/chunks_meta.json','w') as f:
+    json.dump(chunks, f)
+
+print("[Indexer] Index built with", len(chunks), "chunks.")
+  ]]></ac:plain-text-body>
+</ac:structured-macro>
+
+<h2>6. AI Agent</h2>
+<ac:structured-macro ac:name="code">
+  <ac:parameter ac:name="language">python</ac:parameter>
+  <ac:parameter ac:name="title">agent/agent_app.py</ac:parameter>
+  <ac:plain-text-body><![CDATA[
+import json, faiss
+from sentence_transformers import SentenceTransformer
+from langchain.llms import OpenAI
+from langchain.chains import ConversationalRetrievalChain
+from langchain.vectorstores import FAISS
+from langchain.embeddings import SentenceTransformerEmbeddings
+
+def load_index():
+    emb_model = SentenceTransformerEmbeddings(model_name='all-MiniLM-L6-v2')
+    index = faiss.read_index('output/chunks.index')
+    with open('output/chunks_meta.json') as f:
+        chunks = json.load(f)
+    vectorstore = FAISS(embedding_function=emb_model, index=index,
+                        docstore={i: c for i,c in enumerate(chunks)},
+                        index_to_docstore_id={i: str(i) for i in range(len(chunks))})
+    return vectorstore
+
+vectorstore = load_index()
+llm = OpenAI(temperature=0)
+qa = ConversationalRetrievalChain.from_llm(llm, vectorstore.as_retriever())
+
+def answer(query, chat_history=[]):
+    res = qa({"question": query, "chat_history": chat_history})
+    return res['answer']
+  ]]></ac:plain-text-body>
+</ac:structured-macro>
+
+<h2>7. Streamlit UI</h2>
+<ac:structured-macro ac:name="code">
+  <ac:parameter ac:name="language">python</ac:parameter>
+  <ac:parameter ac:name="title">ui/app.py</ac:parameter>
+  <ac:plain-text-body><![CDATA[
+import streamlit as st
+from agent.agent_app import answer
+
+st.set_page_config(page_title="AI Payment Agent", layout="wide")
+st.title("AI Agent — Payment App Explorer")
+
+query = st.text_input("Ask about the system:")
+if st.button("Ask"):
+    with st.spinner("Thinking..."):
+        st.write(answer(query))
+  ]]></ac:plain-text-body>
+</ac:structured-macro>
+
+<h2>8. Deployment</h2>
 <p><em>manifest.yml:</em></p>
 <ac:structured-macro ac:name="code">
   <ac:parameter ac:name="language">yaml</ac:parameter>
@@ -136,21 +261,8 @@ applications:
   - name: ai-agent-payment
     memory: 1G
     instances: 1
-    path: target/ai-agent-payment-0.0.1-SNAPSHOT.jar
+    buildpacks:
+      - python_buildpack
+    command: streamlit run ui/app.py --server.port=$PORT --server.address=0.0.0.0
   ]]></ac:plain-text-body>
 </ac:structured-macro>
-
-<h2>8. Example Queries</h2>
-<ul>
-  <li>“Show me the flow for wallet-to-bank transfer”</li>
-  <li>“Which DBs are used during login?”</li>
-  <li>“What services are called during recharge?”</li>
-</ul>
-
-<h2>9. Benefits</h2>
-<ul>
-  <li>Automated system documentation &amp; discovery</li>
-  <li>Developer onboarding support</li>
-  <li>Subsystem &amp; DB mapping visibility</li>
-  <li>Easy PCF deployment (respects <code>$PORT</code>)</li>
-</ul>
