@@ -1,77 +1,81 @@
-h2. Purpose
-To build an AI Agent that ingests Spring Boot microservices (deployed on PCF dev space), analyzes code + deployment metadata, and provides insights into:
+<h1>AI Agent for Payment Application (Deployable to PCF)</h1>
 
-Overall functional behaviour (Login → Payments → Logout)
+<h2>Overview</h2>
+<p>
+This project provides an <em>AI-powered agent</em> for exploring a Paytm-like payment application built with Spring Boot microservices and deployed on PCF.<br/>
+The agent analyzes all microservices, their APIs, subsystems, and databases to produce an <strong>end-to-end functional behaviour map</strong> from login to logout.
+</p>
 
-Subsystems and interactions
+<h2>1. Architecture</h2>
+<p>High-level components:</p>
+<ul>
+  <li><strong>Collector:</strong> Gathers PCF app metadata and code.</li>
+  <li><strong>Parser & Extractor:</strong> Java Maven project using JavaParser.</li>
+  <li><strong>Indexer:</strong> Python script with embeddings + FAISS vector DB.</li>
+  <li><strong>Agent:</strong> LangChain-based retrieval QA pipeline.</li>
+  <li><strong>Frontend:</strong> Streamlit app for interactive Q&amp;A.</li>
+</ul>
 
-Databases and data flows
-
-End-to-end journeys
-
-h2. High-level Architecture
-
-|| Component || Description ||
-| Collector / Ingest | Fetch PCF metadata (apps, routes, bindings) and codebase. |
-| Parser & Extractor | Java Maven project using JavaParser to extract controllers, services, entities, repos. |
-| Indexer | Python + FAISS + Sentence Transformers to build vector DB from extracted chunks. |
-| AI Agent | LangChain agent powered by OpenAI to answer queries over indexed data. |
-| Frontend | Streamlit app for interactive Q&A and visual graph display. |
-| Security & Ops | Role-based access, PCF deployment with manifest, CI/CD via Jenkins. |
-
-h2. Repo Structure
-
-{code:java|title=Project Structure}
+<h2>2. Repository Structure</h2>
+<ac:structured-macro ac:name="code">
+  <ac:plain-text-body><![CDATA[
 ai-agent-paymentapp/
-├─ code-extractor/ (Java Maven Project)
-├─ indexer/ (Python Indexer)
-├─ agent/ (LangChain Agent)
-├─ ui/ (Streamlit UI)
-├─ requirements.txt
-└─ output/ (chunks.json + index)
-{code}
+├── code-extractor/   (Java Maven Project)
+├── indexer/          (Python indexer)
+├── agent/            (Agent logic)
+├── ui/               (Streamlit UI)
+├── requirements.txt
+└── output/           (chunks.json, index files)
+  ]]></ac:plain-text-body>
+</ac:structured-macro>
 
-h2. Java Maven Project — Code Extractor
-
-Generates chunks.json describing each class/service/controller/entity in the codebase.
-
-{code:xml|title=pom.xml}
-<project xmlns="http://maven.apache.org/POM/4.0.0
-" ...>
-<dependencies>
-<dependency>
-<groupId>com.github.javaparser</groupId>
-<artifactId>javaparser-core</artifactId>
-<version>3.25.4</version>
-</dependency>
-<dependency>
-<groupId>com.fasterxml.jackson.core</groupId>
-<artifactId>jackson-databind</artifactId>
-<version>2.15.2</version>
-</dependency>
-</dependencies>
+<h2>3. Java Maven Project — Code Extractor</h2>
+<ac:structured-macro ac:name="code">
+  <ac:parameter ac:name="language">xml</ac:parameter>
+  <ac:parameter ac:name="title">pom.xml</ac:parameter>
+  <ac:plain-text-body><![CDATA[
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>com.example</groupId>
+  <artifactId>code-extractor</artifactId>
+  <version>1.0-SNAPSHOT</version>
+  <dependencies>
+    <dependency>
+      <groupId>com.github.javaparser</groupId>
+      <artifactId>javaparser-core</artifactId>
+      <version>3.25.4</version>
+    </dependency>
+    <dependency>
+      <groupId>com.fasterxml.jackson.core</groupId>
+      <artifactId>jackson-databind</artifactId>
+      <version>2.15.2</version>
+    </dependency>
+  </dependencies>
 </project>
-{code}
+  ]]></ac:plain-text-body>
+</ac:structured-macro>
 
-{panel:title=Usage|borderStyle=solid|borderColor=#ccc|bgColor=#F9F9F9}
+<p><strong>Usage:</strong></p>
+<ac:structured-macro ac:name="code">
+  <ac:parameter ac:name="language">bash</ac:parameter>
+  <ac:plain-text-body><![CDATA[
+mvn clean package
+java -cp target/code-extractor-1.0-SNAPSHOT.jar com.example.extractor.App ../springboot-services
+  ]]></ac:plain-text-body>
+</ac:structured-macro>
 
-Build: mvn clean package
+<p>Output: <code>output/chunks.json</code></p>
 
-Run: java -cp target/code-extractor-1.0-SNAPSHOT.jar com.example.extractor.App ../springboot-services
-
-Output: output/chunks.json
-{panel}
-
-h2. Python Indexer
-
-Builds FAISS vector index from chunks.json.
-
-{code:python|title=indexer/build_index.py}
+<h2>4. Python Indexer</h2>
+<ac:structured-macro ac:name="code">
+  <ac:parameter ac:name="language">python</ac:parameter>
+  <ac:parameter ac:name="title">indexer/build_index.py</ac:parameter>
+  <ac:plain-text-body><![CDATA[
 import json, faiss
 from sentence_transformers import SentenceTransformer
 
 with open('chunks.json') as f:
-chunks = json.load(f)
+    chunks = json.load(f)
 
 texts = [c['description'] for c in chunks]
 model = SentenceTransformer('all-MiniLM-L6-v2')
@@ -80,60 +84,73 @@ embs = model.encode(texts)
 index = faiss.IndexFlatL2(embs.shape[1])
 index.add(embs)
 faiss.write_index(index, 'chunks.index')
-{code}
+  ]]></ac:plain-text-body>
+</ac:structured-macro>
 
-h2. AI Agent (LangChain)
-
-Uses FAISS + LLM to answer queries.
-
-{code:python|title=agent/agent_app.py}
+<h2>5. AI Agent (LangChain)</h2>
+<ac:structured-macro ac:name="code">
+  <ac:parameter ac:name="language">python</ac:parameter>
+  <ac:parameter ac:name="title">agent/agent_app.py</ac:parameter>
+  <ac:plain-text-body><![CDATA[
 from langchain.llms import OpenAI
 from langchain.chains import ConversationalRetrievalChain
 from langchain.vectorstores import FAISS
-...
 
 llm = OpenAI(temperature=0)
 qa = ConversationalRetrievalChain.from_llm(llm, vectorstore.as_retriever())
 
 def answer(query, chat_history=[]):
-return qa({"question": query, "chat_history": chat_history})['answer']
-{code}
+    return qa({"question": query, "chat_history": chat_history})['answer']
+  ]]></ac:plain-text-body>
+</ac:structured-macro>
 
-h2. Streamlit Frontend
-
-{code:python|title=ui/app.py}
+<h2>6. Streamlit Frontend</h2>
+<ac:structured-macro ac:name="code">
+  <ac:parameter ac:name="language">python</ac:parameter>
+  <ac:parameter ac:name="title">ui/app.py</ac:parameter>
+  <ac:plain-text-body><![CDATA[
 import streamlit as st
 from agent.agent_app import answer
 
 st.title("AI Agent — Payment App Explorer")
 query = st.text_input("Ask about the system:")
 if st.button("Ask"):
-st.write(answer(query))
-{code}
+    st.write(answer(query))
+  ]]></ac:plain-text-body>
+</ac:structured-macro>
 
-Run:
-{code:bash}
+<p><strong>Run:</strong></p>
+<ac:structured-macro ac:name="code">
+  <ac:parameter ac:name="language">bash</ac:parameter>
+  <ac:plain-text-body><![CDATA[
 streamlit run ui/app.py
-{code}
+  ]]></ac:plain-text-body>
+</ac:structured-macro>
 
-h2. Example Queries
+<h2>7. Deployment to PCF</h2>
+<p><em>manifest.yml:</em></p>
+<ac:structured-macro ac:name="code">
+  <ac:parameter ac:name="language">yaml</ac:parameter>
+  <ac:plain-text-body><![CDATA[
+applications:
+  - name: ai-agent-payment
+    memory: 1G
+    instances: 1
+    path: target/ai-agent-payment-0.0.1-SNAPSHOT.jar
+  ]]></ac:plain-text-body>
+</ac:structured-macro>
 
-“Show me the full flow for wallet-to-bank transfer”
+<h2>8. Example Queries</h2>
+<ul>
+  <li>“Show me the flow for wallet-to-bank transfer”</li>
+  <li>“Which DBs are used during login?”</li>
+  <li>“What services are called during recharge?”</li>
+</ul>
 
-“Which DBs are used during login?”
-
-“What services are called when a recharge is performed?”
-
-h2. Next Steps
-
- Add PCF manifest.yml and Dockerfile for deployment
-
- Connect CI/CD with Jenkins pipelines
-
- Secure endpoints with OAuth2 / SSO
-
- Enhance graph visualization with PyVis
-
-👉 This Confluence page documents the entire workflow from extraction → indexing → agent → UI, and can be shared with your dev + ops team.
-
-Would you like me to extend this Confluence doc with PCF manifest.yml + Dockerfile sections so your team has deployment-ready details in the same page?
+<h2>9. Benefits</h2>
+<ul>
+  <li>Automated system documentation &amp; discovery</li>
+  <li>Developer onboarding support</li>
+  <li>Subsystem &amp; DB mapping visibility</li>
+  <li>Easy PCF deployment (respects <code>$PORT</code>)</li>
+</ul>
