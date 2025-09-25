@@ -1,0 +1,16 @@
+📊 CR Excel ──► Pre-processor ──► Failure Pattern Knowledge Graph
+                                      │
+                                      ▼
+                           Vector DB (Code Embeddings)
+                                      │
+                                      ▼
+🔁 Git Diff ──► Static Analyzer ──► Class Diagram Generator
+                                      │
+                                      ▼
+📦 Context Builder ──► Multi-LLM Pipeline ──► Risk Prediction Engine
+                                      │
+                                      ▼
+🧪 Dynamic Tests (Optional) ──► Runtime Insights
+                                      │
+                                      ▼
+📊 Risk Dashboard ──► Human Feedback Loop ──► Continuous Learning
